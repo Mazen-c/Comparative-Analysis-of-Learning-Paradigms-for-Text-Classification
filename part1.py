@@ -4,61 +4,65 @@ from collections import Counter
 from datasets import load_dataset
 
 
-# %% [Cell 2] Load dataset and inspect structure
-dataset = load_dataset("dair-ai/emotion")
+def main():
+    # %% [Cell 2] Load dataset and inspect structure
+    dataset = load_dataset("dair-ai/emotion")
 
-# Print high-level dataset info (splits, features, number of rows)
-print(dataset)
+    # Print high-level dataset info (splits, features, number of rows)
+    print(dataset)
 
-# Show one raw example from each split to understand the data format
-for split in ["train", "validation", "test"]:
-    print(f"\n--- {split.upper()} SAMPLE ---")
-    print(dataset[split][0])
-
-
-# %% [Cell 3] Class distribution — counts per emotion per split
-label_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
-
-# Print total examples per split
-for split in ["train", "validation", "test"]:
-    print(f"{split}: {len(dataset[split])} examples")
-
-# Count how many examples belong to each emotion label
-for split in ["train", "validation", "test"]:
-    labels = dataset[split]["label"]
-    counts = Counter(labels)
-    print(f"\n{split.upper()}:")
-    for label_id, count in sorted(counts.items()):
-        print(f"  {label_names[label_id]:<10} : {count}")
+    # Show one raw example from each split to understand the data format
+    for split in ["train", "validation", "test"]:
+        print(f"\n--- {split.upper()} SAMPLE ---")
+        print(dataset[split][0])
 
 
-# %% [Cell 4] Text length statistics — character-level summary per split
-for split in ["train", "validation", "test"]:
-    lengths = [len(text) for text in dataset[split]["text"]]
-    avg = sum(lengths) / len(lengths)
-    print(f"  {split} — min: {min(lengths)}, max: {max(lengths)}, avg: {avg:.1f}")
+    # %% [Cell 3] Class distribution — counts per emotion per split
+    label_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
+
+    # Print total examples per split
+    for split in ["train", "validation", "test"]:
+        print(f"{split}: {len(dataset[split])} examples")
+
+    # Count how many examples belong to each emotion label
+    for split in ["train", "validation", "test"]:
+        labels = dataset[split]["label"]
+        counts = Counter(labels)
+        print(f"\n{split.upper()}:")
+        for label_id, count in sorted(counts.items()):
+            print(f"  {label_names[label_id]:<10} : {count}")
 
 
-# %% [Cell 5] Plot class distribution across all splits
-fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    # %% [Cell 4] Text length statistics — character-level summary per split
+    for split in ["train", "validation", "test"]:
+        lengths = [len(text) for text in dataset[split]["text"]]
+        avg = sum(lengths) / len(lengths)
+        print(f"  {split} — min: {min(lengths)}, max: {max(lengths)}, avg: {avg:.1f}")
 
-for i, split in enumerate(["train", "validation", "test"]):
-    labels = dataset[split]["label"]
-    counts = Counter(labels)
-    # Map integer label IDs to human-readable emotion names
-    names  = [label_names[k] for k in sorted(counts)]
-    values = [counts[k]       for k in sorted(counts)]
 
-    axes[i].bar(names, values, color="steelblue")
-    axes[i].set_title(f"{split.capitalize()} — Class Distribution")
-    axes[i].set_xlabel("Emotion")
-    axes[i].set_ylabel("Count")
-    axes[i].tick_params(axis="x", rotation=30)
+    # %% [Cell 5] Plot class distribution across all splits
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 
-plt.tight_layout()
-plt.savefig("class_distribution.png", dpi=150)
-plt.show()
+    for i, split in enumerate(["train", "validation", "test"]):
+        labels = dataset[split]["label"]
+        counts = Counter(labels)
+        # Map integer label IDs to human-readable emotion names
+        names  = [label_names[k] for k in sorted(counts)]
+        values = [counts[k]       for k in sorted(counts)]
 
+        axes[i].bar(names, values, color="steelblue")
+        axes[i].set_title(f"{split.capitalize()} — Class Distribution")
+        axes[i].set_xlabel("Emotion")
+        axes[i].set_ylabel("Count")
+        axes[i].tick_params(axis="x", rotation=30)
+
+    plt.tight_layout()
+    plt.savefig("class_distribution.png", dpi=150)
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
 
 # %% [Cell 6] Plot text length distribution across all splits
 fig, axes = plt.subplots(1, 3, figsize=(15, 4))
