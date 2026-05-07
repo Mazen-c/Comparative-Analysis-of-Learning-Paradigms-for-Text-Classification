@@ -28,26 +28,24 @@ tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
 class EmotionDataset(Dataset):
     def __init__(self, split):
-        self.texts  = dataset[split]["text"]
-        self.labels = dataset[split]["label"]
-
-    def __len__(self):
-        return len(self.texts)
-
-    def __getitem__(self, idx):
-        # Tokenize on-the-fly; truncate/pad to 64 tokens (covers all examples)
-        encoding = tokenizer(
-            self.texts[idx],
+        self.texts = dataset[split]["text"]
+        self.encodings = tokenizer(
+            self.texts,
             truncation=True,
             padding="max_length",
             max_length=64,
             return_tensors="pt"
         )
+        self.labels = torch.tensor(dataset[split]["label"], dtype=torch.long)
+
+    def __len__(self):
+        return self.labels.size(0)
+
+    def __getitem__(self, idx):
         return {
-            # Remove the batch dimension added by return_tensors="pt"
-            "input_ids":      encoding["input_ids"].squeeze(0),
-            "attention_mask": encoding["attention_mask"].squeeze(0),
-            "labels":         torch.tensor(self.labels[idx], dtype=torch.long)
+            "input_ids":      self.encodings["input_ids"][idx],
+            "attention_mask": self.encodings["attention_mask"][idx],
+            "labels":         self.labels[idx]
         }
 
 
