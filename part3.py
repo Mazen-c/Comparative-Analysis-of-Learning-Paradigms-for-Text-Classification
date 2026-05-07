@@ -130,26 +130,27 @@ def run_epoch(loader, training=True):
 train_losses, val_losses = [], []
 train_accs,   val_accs   = [], []
 
-print("\nTraining...\n")
-train_start = time.time()
+if __name__ == "__main__":
+    print("\nTraining...\n")
+    train_start = time.time()
 
-for epoch in range(EPOCHS):
-    # Full pass over training data (with gradient updates)
-    t_loss, t_acc = run_epoch(train_loader, training=True)
-    # Full pass over validation data (no gradient updates)
-    v_loss, v_acc = run_epoch(val_loader,   training=False)
+    for epoch in range(EPOCHS):
+        # Full pass over training data (with gradient updates)
+        t_loss, t_acc = run_epoch(train_loader, training=True)
+        # Full pass over validation data (no gradient updates)
+        v_loss, v_acc = run_epoch(val_loader,   training=False)
 
-    train_losses.append(t_loss)
-    val_losses.append(v_loss)
-    train_accs.append(t_acc)
-    val_accs.append(v_acc)
+        train_losses.append(t_loss)
+        val_losses.append(v_loss)
+        train_accs.append(t_acc)
+        val_accs.append(v_acc)
 
-    print(f"Epoch {epoch+1}/{EPOCHS} — "
-          f"Train Loss: {t_loss:.4f}, Train Acc: {t_acc:.4f} | "
-          f"Val Loss: {v_loss:.4f}, Val Acc: {v_acc:.4f}")
+        print(f"Epoch {epoch+1}/{EPOCHS} — "
+              f"Train Loss: {t_loss:.4f}, Train Acc: {t_acc:.4f} | "
+              f"Val Loss: {v_loss:.4f}, Val Acc: {v_acc:.4f}")
 
-train_time = time.time() - train_start
-print(f"\nTotal training time: {train_time:.1f}s")
+    train_time = time.time() - train_start
+    print(f"\nTotal training time: {train_time:.1f}s")
 
 
 # %% [Cell 9] Plot loss and accuracy curves
