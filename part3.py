@@ -1,7 +1,6 @@
 # %% [Cell 1] Imports
 import time
 import torch
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datasets import load_dataset
