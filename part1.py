@@ -1,10 +1,7 @@
 # %% [Cell 1] Imports
-import torch
 import matplotlib.pyplot as plt
-import seaborn as sns
 from collections import Counter
 from datasets import load_dataset
-from transformers import AutoTokenizer
 
 
 # %% [Cell 2] Load dataset and inspect structure
