@@ -36,3 +36,4 @@ Thumbs.db
 .cache/
 datasets/
 models/
+llm_prompting_outputs/
