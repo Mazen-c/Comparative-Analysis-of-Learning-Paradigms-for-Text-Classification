@@ -1,6 +1,10 @@
 # %% [Cell 1] Imports
+import os
 import time
 import torch
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datasets import load_dataset
@@ -18,6 +22,24 @@ print(f"Using device: {device}")
 label_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
 NUM_LABELS  = len(label_names)
 
+
+def env_int(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        print(f"Ignoring invalid {name}={value!r}; using {default}.")
+        return default
+
+
+FAST_DEV_RUN = os.getenv("FAST_DEV_RUN", "").lower() in {"1", "true", "yes"}
+BATCH_SIZE = env_int("BATCH_SIZE", 8 if FAST_DEV_RUN else 32)
+TRAIN_SAMPLE_LIMIT = env_int("TRAIN_SAMPLE_LIMIT", 64 if FAST_DEV_RUN else 0)
+VAL_SAMPLE_LIMIT = env_int("VAL_SAMPLE_LIMIT", 32 if FAST_DEV_RUN else 0)
+TEST_SAMPLE_LIMIT = env_int("TEST_SAMPLE_LIMIT", 32 if FAST_DEV_RUN else 0)
+
 # Load the same emotion dataset used in Part 1
 dataset = load_dataset("dair-ai/emotion")
 
@@ -27,8 +49,12 @@ dataset = load_dataset("dair-ai/emotion")
 tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
 class EmotionDataset(Dataset):
-    def __init__(self, split):
-        self.texts = dataset[split]["text"]
+    def __init__(self, split, sample_limit=0):
+        split_dataset = dataset[split]
+        if sample_limit > 0:
+            split_dataset = split_dataset.select(range(min(sample_limit, len(split_dataset))))
+
+        self.texts = list(split_dataset["text"])
         self.encodings = tokenizer(
             self.texts,
             truncation=True,
@@ -36,7 +62,7 @@ class EmotionDataset(Dataset):
             max_length=64,
             return_tensors="pt"
         )
-        self.labels = torch.tensor(dataset[split]["label"], dtype=torch.long)
+        self.labels = torch.tensor(list(split_dataset["label"]), dtype=torch.long)
 
     def __len__(self):
         return self.labels.size(0)
@@ -51,9 +77,9 @@ class EmotionDataset(Dataset):
 
 # %% [Cell 4] DataLoaders — batch and shuffle the three splits
 # Shuffle training data each epoch to prevent ordering bias
-train_loader = DataLoader(EmotionDataset("train"),      batch_size=32, shuffle=True)
-val_loader   = DataLoader(EmotionDataset("validation"), batch_size=32, shuffle=False)
-test_loader  = DataLoader(EmotionDataset("test"),       batch_size=32, shuffle=False)
+train_loader = DataLoader(EmotionDataset("train", TRAIN_SAMPLE_LIMIT), batch_size=BATCH_SIZE, shuffle=True)
+val_loader   = DataLoader(EmotionDataset("validation", VAL_SAMPLE_LIMIT), batch_size=BATCH_SIZE, shuffle=False)
+test_loader  = DataLoader(EmotionDataset("test", TEST_SAMPLE_LIMIT), batch_size=BATCH_SIZE, shuffle=False)
 
 
 # %% [Cell 5] Load pre-trained BERT and attach a classification head
@@ -70,7 +96,7 @@ print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.re
 
 
 # %% [Cell 6] Optimizer and learning-rate scheduler
-EPOCHS = 3
+EPOCHS = env_int("EPOCHS", 1 if FAST_DEV_RUN else 3)
 LR     = 2e-5  # standard BERT fine-tuning range: 1e-5 to 5e-5
 
 # AdamW (Adam + decoupled weight decay) is the standard choice for BERT
@@ -175,7 +201,7 @@ plt.legend()
 
 plt.tight_layout()
 plt.savefig("bert_training_curves.png", dpi=150)
-plt.show()
+plt.close()
 
 
 # %% [Cell 10] Evaluate on the held-out test set
@@ -202,16 +228,22 @@ infer_time = time.time() - infer_start
 # Macro F1 treats each class equally regardless of support — important for
 # imbalanced classes like "surprise" and "love"
 accuracy = accuracy_score(all_labels, all_preds)
-macro_f1 = f1_score(all_labels, all_preds, average="macro")
+macro_f1 = f1_score(all_labels, all_preds, labels=range(NUM_LABELS), average="macro", zero_division=0)
 
 print(f"\nTest Accuracy : {accuracy:.4f}")
 print(f"Macro F1      : {macro_f1:.4f}")
 print(f"Inference Time: {infer_time:.2f}s\n")
-print(classification_report(all_labels, all_preds, target_names=label_names))
+print(classification_report(
+    all_labels,
+    all_preds,
+    labels=range(NUM_LABELS),
+    target_names=label_names,
+    zero_division=0
+))
 
 
 # %% [Cell 11] Confusion matrix — per-class error analysis
-cm = confusion_matrix(all_labels, all_preds)
+cm = confusion_matrix(all_labels, all_preds, labels=range(NUM_LABELS))
 
 plt.figure(figsize=(8, 6))
 # annot=True prints raw counts in each cell; fmt="d" keeps them as integers
@@ -222,7 +254,7 @@ plt.xlabel("Predicted")
 plt.ylabel("Actual")
 plt.tight_layout()
 plt.savefig("bert_confusion_matrix.png", dpi=150)
-plt.show()
+plt.close()
 
 
 # %% [Cell 12] Model summary and reflection

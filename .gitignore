@@ -1,0 +1,38 @@
+# Python bytecode and runtime caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, type-checking, and linting caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor and OS-local files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated plots and local logs
+*.png
+*.log
+
+# Model checkpoints and serialized artifacts
+*.pt
+*.pth
+*.ckpt
+*.joblib
+*.pkl
+
+# Local ML caches, datasets, and downloaded model folders
+.cache/
+datasets/
+models/

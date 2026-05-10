@@ -1,13 +1,22 @@
 # %% [Cell 1] Imports
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from collections import Counter
 from datasets import load_dataset
+from transformers import AutoTokenizer
 
 
-def main():
+label_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
+
+
+def load_emotion_dataset():
+    return load_dataset("dair-ai/emotion")
+
+
+def main(dataset):
     # %% [Cell 2] Load dataset and inspect structure
-    dataset = load_dataset("dair-ai/emotion")
-
     # Print high-level dataset info (splits, features, number of rows)
     print(dataset)
 
@@ -18,8 +27,6 @@ def main():
 
 
     # %% [Cell 3] Class distribution — counts per emotion per split
-    label_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
-
     # Print total examples per split
     for split in ["train", "validation", "test"]:
         print(f"{split}: {len(dataset[split])} examples")
@@ -58,11 +65,12 @@ def main():
 
     plt.tight_layout()
     plt.savefig("class_distribution.png", dpi=150)
-    plt.show()
+    plt.close(fig)
 
 
 if __name__ == "__main__":
-    main()
+    dataset = load_emotion_dataset()
+    main(dataset)
 
 # %% [Cell 6] Plot text length distribution across all splits
 fig, axes = plt.subplots(1, 3, figsize=(15, 4))
@@ -77,7 +85,7 @@ for i, split in enumerate(["train", "validation", "test"]):
 
 plt.tight_layout()
 plt.savefig("text_length_distribution.png", dpi=150)
-plt.show()
+plt.close(fig)
 
 
 # %% [Cell 7] Build custom vocabulary for the RNN model
