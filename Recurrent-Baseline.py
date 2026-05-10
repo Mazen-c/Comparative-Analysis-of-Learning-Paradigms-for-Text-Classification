@@ -140,7 +140,9 @@ print(f"Train/Val/Test examples: {len(train_split):,}/{len(val_split):,}/{len(te
 def encode_text(text, max_len=MAX_LEN):
     tokens = simple_tokenize(text)[:max_len]
     token_ids = [vocab.get(token, UNK_IDX) for token in tokens]
-    length = max(1, len(token_ids))
+    if not token_ids:
+        token_ids = [UNK_IDX]
+    length = len(token_ids)
     token_ids += [PAD_IDX] * (max_len - len(token_ids))
     return token_ids, length
 
