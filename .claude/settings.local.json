@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Ahmed\\\\Desktop\\\\Projects\\\\Comparative-Analysis-of-Learning-Paradigms-for-Text-Classification\" -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(python fix_notebook.py)",
+      "Bash(jupyter --version)"
+    ]
+  }
+}
