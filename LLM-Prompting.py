@@ -14,7 +14,7 @@ import torch
 from datasets import Dataset as HFDataset
 from datasets import DatasetDict, load_dataset
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 
 try:
     from transformers import BitsAndBytesConfig
@@ -22,30 +22,52 @@ except ImportError:
     BitsAndBytesConfig = None
 
 
-# This notebook-style script evaluates an instruction-tuned LLM with no gradient updates.
-# Default model for the assignment: microsoft/Phi-3-mini-4k-instruct.
-# On a CPU-only machine, use FAST_DEV_RUN=1 and/or set MODEL_ID to a smaller local model.
-MODEL_ID = os.getenv("MODEL_ID", "microsoft/Phi-3-mini-4k-instruct")
-FAST_DEV_RUN = os.getenv("FAST_DEV_RUN", "").lower() in {"1", "true", "yes"}
-TEST_SAMPLE_LIMIT = int(os.getenv("TEST_SAMPLE_LIMIT", "24" if FAST_DEV_RUN else "0"))
-MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "96"))
-COT_MAX_NEW_TOKENS = int(os.getenv("COT_MAX_NEW_TOKENS", "160"))
-
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "y"}
+
+
+def env_int(name, default):
+    return int(os.getenv(name, str(default)))
+
+
+# This notebook-style script evaluates an instruction-tuned LLM with no gradient updates.
+# Phi-3 is the intended assignment-scale model, but CPU notebooks need a small default.
+ASSIGNMENT_MODEL_ID = "microsoft/Phi-3-mini-4k-instruct"
+CPU_FALLBACK_MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
+MODEL_ID = os.getenv(
+    "MODEL_ID",
+    ASSIGNMENT_MODEL_ID if DEVICE.type == "cuda" else CPU_FALLBACK_MODEL_ID,
+)
+FAST_DEV_RUN = env_flag("FAST_DEV_RUN")
+HF_LOCAL_FILES_ONLY = env_flag("HF_LOCAL_FILES_ONLY", default=DEVICE.type == "cpu")
+DEFAULT_TEST_SAMPLE_LIMIT = 24 if FAST_DEV_RUN or DEVICE.type == "cpu" else 0
+TEST_SAMPLE_LIMIT = env_int("TEST_SAMPLE_LIMIT", DEFAULT_TEST_SAMPLE_LIMIT)
+MAX_NEW_TOKENS = env_int("MAX_NEW_TOKENS", 8)
+COT_MAX_NEW_TOKENS = env_int("COT_MAX_NEW_TOKENS", 64)
+
 USE_4BIT = (
     DEVICE.type == "cuda"
     and BitsAndBytesConfig is not None
-    and os.getenv("DISABLE_4BIT", "").lower() not in {"1", "true", "yes"}
+    and not env_flag("DISABLE_4BIT")
 )
 
-OUTPUT_DIR = Path("llm_prompting_outputs")
-OUTPUT_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "llm_prompting_outputs"))
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 label_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
 label_to_id = {label: index for index, label in enumerate(label_names)}
 
 print(f"Using device: {DEVICE}")
 print(f"Model id: {MODEL_ID}")
+print(f"Local files only: {HF_LOCAL_FILES_ONLY}")
+print(f"Test sample limit: {TEST_SAMPLE_LIMIT or 'full test split'}")
+print(f"Output dir: {OUTPUT_DIR}")
 print(f"4-bit quantization enabled: {USE_4BIT}")
 
 
@@ -82,19 +104,42 @@ print(f"Test examples evaluated: {len(test_split):,}")
 
 # %% [Cell 3] Model architecture and pretraining explanation for the notebook
 # Assignment note: clearly explain architecture and pretraining objective.
-# Source: Hugging Face model card for microsoft/Phi-3-mini-4k-instruct.
-model_explanation = f"""
-## Pretrained Instruction-Tuned LLM Used
-
-Model: `{MODEL_ID}`
-
-For the main assignment run, this script is configured for `microsoft/Phi-3-mini-4k-instruct`.
+MODEL_NOTES = {
+    ASSIGNMENT_MODEL_ID: """
+For the assignment-scale run, use `microsoft/Phi-3-mini-4k-instruct`.
 Phi-3 Mini-4K-Instruct is a 3.8B-parameter dense decoder-only Transformer language model
 with a 4K-token context window. It is pretrained as an autoregressive causal language model,
 meaning it learns to predict the next token from previous tokens. Its training data combines
 filtered public web/code/educational text, synthetic textbook-like data, and chat-format data.
 The instruction-tuned version is further aligned with supervised fine-tuning and Direct
 Preference Optimization, which improves instruction following and safer assistant behavior.
+""",
+    CPU_FALLBACK_MODEL_ID: """
+For a CPU-safe notebook run, this section uses `HuggingFaceTB/SmolLM2-135M-Instruct`.
+SmolLM2-135M-Instruct is a compact decoder-only causal language model from the SmolLM2
+family. Like Phi-3, it is pretrained with a next-token prediction objective and then adapted
+for instruction following. It is much smaller than Phi-3, so it is appropriate for validating
+the prompting pipeline locally, while Phi-3 remains the stronger assignment-scale model when
+GPU memory and the model weights are available.
+""",
+}
+
+model_note = MODEL_NOTES.get(
+    MODEL_ID,
+    """
+This experiment uses the instruction-tuned causal language model named by `MODEL_ID`.
+It is used as a decoder-only language model for prompt-based classification: the prompt
+constrains generation to one of the six emotion labels, and the generated text is parsed
+into a class prediction.
+""",
+).strip()
+
+model_explanation = f"""
+## Pretrained Instruction-Tuned LLM Used
+
+Model: `{MODEL_ID}`
+
+{model_note}
 
 In this experiment, the model is used only for inference. No gradients are computed, no model
 weights are updated, and the classifier behavior comes entirely from prompting.
@@ -105,11 +150,26 @@ print(model_explanation)
 # %% [Cell 4] Load tokenizer and model with optional 4-bit quantization
 def load_instruction_model(model_id):
     """Load an instruction-tuned causal LM for inference only."""
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    print(f"Loading tokenizer/model for {model_id}...")
+    common_kwargs = {
+        "trust_remote_code": True,
+        "local_files_only": HF_LOCAL_FILES_ONLY,
+    }
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_id, **common_kwargs)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not load tokenizer for {model_id!r}. "
+            "The notebook is in local-files-only mode on CPU to avoid hanging on a large download. "
+            "Use the cached CPU model, set MODEL_ID to an already downloaded model, or set "
+            "HF_LOCAL_FILES_ONLY=0 if you intentionally want Hugging Face to download files."
+        ) from exc
+
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model_kwargs = {"trust_remote_code": True}
+    model_kwargs = dict(common_kwargs)
     if USE_4BIT:
         # Recommended for GPU memory efficiency when bitsandbytes is installed.
         model_kwargs["quantization_config"] = BitsAndBytesConfig(
@@ -122,7 +182,17 @@ def load_instruction_model(model_id):
     elif DEVICE.type == "cuda":
         model_kwargs["torch_dtype"] = torch.float16
 
-    model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
+    try:
+        model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not load model weights for {model_id!r}. "
+            "If you see a stuck 'Fetching 2 files' progress bar, the selected model weights are "
+            "not fully cached. On CPU, keep the default SmolLM2 model or set MODEL_ID to another "
+            "small cached instruct model. For Phi-3, run on a machine with enough GPU/RAM and "
+            "allow the full weights to download first."
+        ) from exc
+
     if not USE_4BIT:
         model = model.to(DEVICE)
     model.eval()
@@ -133,11 +203,37 @@ tokenizer, model = load_instruction_model(MODEL_ID)
 
 
 # %% [Cell 5] Prompt templates for zero-shot, few-shot, and chain-of-thought
+def select_balanced_examples(num_examples):
+    """Select deterministic few-shot examples with broader label coverage."""
+    chosen_rows = []
+    seen_labels = set()
+
+    for row in train_split:
+        label_id = row["label"]
+        if label_id not in seen_labels:
+            chosen_rows.append(row)
+            seen_labels.add(label_id)
+        if len(chosen_rows) == min(num_examples, len(label_names)):
+            break
+
+    if len(chosen_rows) < num_examples:
+        used_texts = {row["text"] for row in chosen_rows}
+        for row in train_split:
+            if row["text"] in used_texts:
+                continue
+            chosen_rows.append(row)
+            used_texts.add(row["text"])
+            if len(chosen_rows) == num_examples:
+                break
+
+    return chosen_rows[:num_examples]
+
+
 def format_examples(num_examples):
     """Use labeled training examples only inside the few-shot prompt."""
     lines = []
-    for row in train_split.select(range(num_examples)):
-        lines.append(f"Text: {row['text']}\nLabel: {label_names[row['label']]}")
+    for row in select_balanced_examples(num_examples):
+        lines.append(f"Text: {row['text']}\nFinal label: {label_names[row['label']]}")
     return "\n\n".join(lines)
 
 
@@ -146,7 +242,8 @@ def build_prompt(text, setting):
     base_instruction = (
         "Classify the emotion expressed in the text. "
         f"Choose exactly one label from this list: {label_list}. "
-        "Return the answer in the format: Final label: <label>."
+        "Return only one line in the format: Final label: <label>. "
+        "Do not write new examples, explanations, or extra text."
     )
 
     if setting == "zero_shot":
@@ -172,7 +269,7 @@ def build_prompt(text, setting):
         return (
             "Classify the emotion expressed in the text. "
             f"Choose exactly one label from this list: {label_list}.\n"
-            "Reason step by step about the emotional cues, then end with exactly one line "
+            "Reason briefly about the emotional cues, then end with exactly one line "
             "in this format: Final label: <label>.\n\n"
             f"Text: {text}\nReasoning:"
         )
@@ -184,19 +281,68 @@ settings = ["zero_shot", "few_shot_3", "few_shot_8", "chain_of_thought"]
 
 
 # %% [Cell 6] Generation and label parsing
+class StopAfterFinalLabel(StoppingCriteria):
+    """Stop once the generated answer has completed the required final-label line."""
+
+    def __init__(self, tokenizer, prompt_length):
+        self.tokenizer = tokenizer
+        self.prompt_length = prompt_length
+        self.pattern = re.compile(
+            r"final\s+label\s*:\s*(sadness|joy|love|anger|fear|surprise)\s*(?:\n|$)",
+            re.IGNORECASE,
+        )
+
+    def __call__(self, input_ids, scores, **kwargs):
+        new_tokens = input_ids[0][self.prompt_length :]
+        text = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
+        return bool(self.pattern.search(text))
+
+
+def encode_prompt_for_model(prompt):
+    """Wrap the plain prompt in the model's chat format when available."""
+    system_prompt = (
+        "You are an emotion-classification model. Follow the user's requested output "
+        "format exactly and classify using only the allowed labels."
+    )
+
+    if getattr(tokenizer, "chat_template", None):
+        chat_text = tokenizer.apply_chat_template(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return tokenizer(chat_text, return_tensors="pt", truncation=True, max_length=3072)
+
+    return tokenizer(
+        f"{system_prompt}\n\n{prompt}",
+        return_tensors="pt",
+        truncation=True,
+        max_length=3072,
+    )
+
+
 def generate_raw_output(prompt, setting):
     """Generate model text without computing gradients."""
-    encoded = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=3072)
+    encoded = encode_prompt_for_model(prompt)
     encoded = {key: value.to(model.device) for key, value in encoded.items()}
     max_tokens = COT_MAX_NEW_TOKENS if setting == "chain_of_thought" else MAX_NEW_TOKENS
+    stopping_criteria = StoppingCriteriaList(
+        [StopAfterFinalLabel(tokenizer, encoded["input_ids"].shape[1])]
+    )
 
     with torch.inference_mode():
         generated = model.generate(
             **encoded,
             max_new_tokens=max_tokens,
             do_sample=False,
+            repetition_penalty=1.05,
+            no_repeat_ngram_size=3,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            stopping_criteria=stopping_criteria,
         )
 
     new_tokens = generated[0][encoded["input_ids"].shape[1] :]
@@ -210,9 +356,11 @@ def parse_label(raw_output):
     if final_match:
         return final_match.group(1)
 
-    for label in label_names:
-        if re.search(rf"\b{label}\b", normalized):
-            return label
+    # If the model ignored the requested prefix but answered with a label first,
+    # take that first generated label, not a later label from hallucinated examples.
+    first_label_match = re.search(r"\b(sadness|joy|love|anger|fear|surprise)\b", normalized)
+    if first_label_match:
+        return first_label_match.group(1)
 
     # If parsing fails, use a deterministic fallback so metrics still run.
     return "sadness"
